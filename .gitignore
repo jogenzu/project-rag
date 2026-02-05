@@ -1,0 +1,44 @@
+#python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env/
+.venv/
+
+#IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+#log
+*.log
+*.sql
+*.sqlite
+
+#model file & big data
+*.pth
+*.bin
+*.h5
+*.pt
+docs/*.txt
+docs/*.pdf
+local_m3e_model/
+
+#some config
+*.key
+*.pem
+.env
+*.copy
+
+#temp file
+*.temp
+*.tmp
+
+#os file
+.DS_Store
+Thumbs.db

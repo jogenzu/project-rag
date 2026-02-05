@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Chat Interface</title>
+    <!-- 引入Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <!-- 引入Element Plus -->
+    <link rel="stylesheet" href="https://unpkg.com/element-plus/dist/index.css">
+    <script src="https://unpkg.com/element-plus"></script>
+    <!-- 引入图标 -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@element-plus/icons-vue@2.0.6/dist/index.min.css">
+    <!-- 引入Code Highlighting -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/highlight.js@11.7.0/styles/github.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/highlight.js@11.7.0/lib/highlight.min.js"></script>
+    <!-- 引入Markdown解析库 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@4.3.0/marked.min.js"></script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f7fa;
+        }
+        .chat-container {
+            max-width: 900px;
+            margin: 20px auto;
+            border-radius: 8px;
+            box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+            background-color: #fff;
+            height: 90vh;
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid #ebeef5;
+            background-color: #409eff;
+            color: white;
+            border-radius: 8px 8px 0 0;
+        }
+        .chat-header small {
+            display: block;
+            font-size: 12px;
+            margin-top: 5px;
+            color: rgba(255, 255, 255, 0.8);
+        }
+        .chat-messages {
+            flex: 1;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+        }
+        .user-message {
+            justify-content: flex-end;
+        }
+        .ai-message {
+            justify-content: flex-start;
+        }
+        .message-content {
+            padding: 10px 15px;
+            border-radius: 18px;
+            max-width: 70%;
+            word-wrap: break-word;
+        }
+        .user-message .message-content {
+            background-color: #409eff;
+            color: white;
+        }
+        .user-message .message-content code,
+        .user-message .message-content pre {
+            background-color: rgba(255, 255, 255, 0.2);
+            color: white;
+        }
+        .user-message .message-content a {
+            color: #f0f8ff;
+            text-decoration: underline;
+        }
+        .ai-message .message-content {
+            background-color: #f2f6fc;
+            color: #333;
+        }
+        .avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            margin: 0 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .user-avatar {
+            background-color: #409eff;
+            color: white;
+        }
+        .ai-avatar {
+            background-color: #67c23a;
+            color: white;
+        }
+        .chat-input {
+            padding: 15px;
+            border-top: 1px solid #ebeef5;
+        }
+        .typing-indicator {
+            display: flex;
+            padding: 10px 15px;
+            background-color: #f2f6fc;
+            border-radius: 18px;
+            margin-bottom: 15px;
+            align-items: center;
+            width: fit-content;
+        }
+        .dot {
+            height: 8px;
+            width: 8px;
+            background-color: #999;
+            border-radius: 50%;
+            margin: 0 2px;
+            animation: typing 1.5s infinite ease-in-out;
+        }
+        .dot:nth-child(1) { animation-delay: 0s; }
+        .dot:nth-child(2) { animation-delay: 0.5s; }
+        .dot:nth-child(3) { animation-delay: 1s; }
+        @keyframes typing {
+            0% { transform: translateY(0); }
+            50% { transform: translateY(-5px); }
+            100% { transform: translateY(0); }
+        }
+        /* Markdown样式 */
+        .markdown-content {
+            line-height: 1.6;
+        }
+        .markdown-content h1, 
+        .markdown-content h2, 
+        .markdown-content h3, 
+        .markdown-content h4, 
+        .markdown-content h5, 
+        .markdown-content h6 {
+            margin-top: 1em;
+            margin-bottom: 0.5em;
+            font-weight: 600;
+        }
+        .markdown-content h1 { font-size: 1.5em; }
+        .markdown-content h2 { font-size: 1.3em; }
+        .markdown-content h3 { font-size: 1.2em; }
+        .markdown-content p {
+            margin-bottom: 0.8em;
+        }
+        .markdown-content ul, .markdown-content ol {
+            padding-left: 2em;
+            margin-bottom: 1em;
+        }
+        .markdown-content li {
+            margin-bottom: 0.3em;
+        }
+        .markdown-content pre {
+            background-color: #f6f8fa;
+            border-radius: 4px;
+            padding: 1em;
+            overflow: auto;
+            margin: 0.5em 0;
+            white-space: pre-wrap;
+        }
+        .markdown-content code {
+            background-color: #f6f8fa;
+            padding: 0.2em 0.4em;
+            border-radius: 3px;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.9em;
+            white-space: pre;
+        }
+        .markdown-content pre code {
+            background-color: transparent;
+            padding: 0;
+            white-space: pre;
+        }
+        .markdown-content blockquote {
+            padding: 0 1em;
+            color: #6a737d;
+            border-left: 3px solid #dfe2e5;
+            margin: 0.5em 0;
+        }
+        .markdown-content table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 1em 0;
+        }
+        .markdown-content table th, .markdown-content table td {
+            border: 1px solid #dfe2e5;
+            padding: 6px 13px;
+        }
+        .markdown-content table th {
+            background-color: #f6f8fa;
+            font-weight: 600;
+        }
+        .message-content img {
+            max-width: 100%;
+            height: auto;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="chat-container">
+            <div class="chat-header">
+                <h2>AI Chat Assistant</h2>
+                <div v-if="connectionStatus">
+                    <small>{{connectionStatus}}</small>
+                </div>
+            </div>
+            <div class="chat-messages" ref="messagesContainer">
+                <div v-for="(message, index) in messages" :key="index" 
+                     :class="['message', message.sender === 'user' ? 'user-message' : 'ai-message']">
+                    <div v-if="message.sender === 'bot'" class="avatar ai-avatar">AI</div>
+                    <div class="message-content markdown-content" v-html="renderMarkdown(message.text)"></div>
+                    <div v-if="message.sender === 'user'" class="avatar user-avatar">You</div>
+                </div>
+                <div v-if="isTyping" class="message ai-message">
+                    <div class="avatar ai-avatar">AI</div>
+                    <div class="typing-indicator">
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                        <div class="dot"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="chat-input">
+                <el-input
+                    v-model="userInput"
+                    type="textarea"
+                    :rows="3"
+                    placeholder="Type your message here..."
+                    @keyup.enter.ctrl="sendMessage"
+                ></el-input>
+                <el-button 
+                    type="primary" 
+                    style="margin-top: 10px; width: 100%;" 
+                    @click="sendMessage"
+                    :disabled="isTyping || !userInput.trim()"
+                >
+                    Send Message
+                </el-button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    
+        const { createApp, ref, nextTick, onMounted } = Vue;
+        
+        const app = createApp({
+            setup() {
+                const userInput = ref('');
+                const sessionID = ref('d58db877-72ad-4844-adf5-e1c96884a5a5');
+                const messages = ref([
+                    { sender: 'bot', text: 'Hello! I\'m your AI assistant. How can I help you today?' }
+                ]);
+                const isTyping = ref(false);
+                const messagesContainer = ref(null);
+                const connectionStatus = ref('');
+                
+                // 配置Marked.js
+                const configureMarked = () => {
+                    if (window.marked) {
+                        marked.setOptions({
+                            renderer: new marked.Renderer(),
+                            highlight: function(code, lang) {
+                                const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+                                return hljs.highlight(code, { language }).value;
+                            },
+                            langPrefix: 'hljs language-', // highlight.js css expects a top-level 'hljs' class
+                            gfm: true, // GitHub风格的Markdown
+                            breaks: true, // 将换行符转换为<br>
+                            sanitize: false, // 输出raw HTML
+                            smartypants: true // 使用智能标点符号
+                        });
+                    }
+                };
+                
+                // 渲染Markdown
+                const renderMarkdown = (text) => {
+                    if (!text) return '';
+                    if (!window.marked) return text;
+                    
+                    try {
+                        // 预处理文本 - 修复一些常见的Markdown格式问题
+                        let processedText = text
+                            // 确保代码块前后有空行
+                            .replace(/([^\n])(```)/g, '$1\n$2')
+                            .replace(/(```[\s\S]*?```)([^\n])/g, '$1\n$2')
+                            // 确保列表项前有空行
+                            .replace(/([^\n])(\n[*-] )/g, '$1\n$2')
+                            // 确保标题前有空行
+                            .replace(/([^\n])(\n#{1,6} )/g, '$1\n$2');
+                        
+                        // 使用Marked.js将Markdown渲染为HTML
+                        const html = marked.parse(processedText);
+                        
+                        return html;
+                    } catch (e) {
+                        console.error('Markdown解析错误:', e);
+                        return text;
+                    }
+                };
+
+                // 模拟AI响应
+                const callAI = (userMessage) => {
+                    isTyping.value = true;
+                    
+                    // 创建一个空的AI回复消息
+                    messages.value.push({ sender: 'bot', text: '' });
+                    const botMessageIndex = messages.value.length - 1;
+                    
+                    // 使用POST请求代替GET请求 - 服务器显示403错误表明可能需要使用正确的HTTP方法
+                    const apiUrl = '/api/stream';
+                    
+                    console.log("发送POST请求到:", apiUrl);
+                    connectionStatus.value = '正在连接服务器...';
+                    
+                    // 创建POST请求
+                    fetch(apiUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            query: userMessage,
+                            session_id: sessionID.value,
+                            web_search: false
+                        })
+                    })
+                    .then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        
+                        connectionStatus.value = '连接成功，正在接收数据...';
+                        
+                        // 创建一个新的ReadableStream对象和Reader
+                        const reader = response.body.getReader();
+                        const decoder = new TextDecoder();
+                        let buffer = '';
+                        
+                        // 读取流
+                        function readStream() {
+                            reader.read().then(({ done, value }) => {
+                                if (done) {
+                                    console.log("流处理完成");
+                                    isTyping.value = false;
+                                    connectionStatus.value = '完成';
+                                    // 5秒后清除状态消息
+                                    setTimeout(() => {
+                                        connectionStatus.value = '';
+                                    }, 5000);
+                                    return;
+                                }
+                                
+                                // 解码并处理数据
+                                buffer += decoder.decode(value, { stream: true });
+                                
+                                // 查找所有完整的事件
+                                const events = buffer.split("\n\n");
+                                buffer = events.pop() || ''; // 最后一个可能不完整
+                                
+                                // 处理所有完整的事件
+                                for (const event of events) {
+                                    // 确认有data:前缀
+                                    if (event.startsWith('data:')) {
+                                        try {
+                                            // 提取JSON部分
+                                            const jsonStr = event.substring(5).trim();
+                                            const data = JSON.parse(jsonStr);
+                                            console.log("处理数据:", data);
+                                            
+                                            // 从content或text字段获取内容
+                                            if (data.content) {
+                                                messages.value[botMessageIndex].text += data.content;
+                                                scrollToBottom();
+                                                
+                                                // Markdown会自动处理代码高亮，不需要单独处理
+                                                // 在完整消息后应用渲染
+                                                if (data.done) {
+                                                    // 重新解析整个文本以获得更好的Markdown渲染效果
+                                                    nextTick(() => {
+                                                        const fullText = messages.value[botMessageIndex].text;
+                                                        // 这里不直接修改text以避免重复附加，而是触发一次重新渲染
+                                                        document.querySelectorAll('.markdown-content pre code').forEach(block => {
+                                                            if (window.hljs && !block.classList.contains('hljs')) {
+                                                                hljs.highlightElement(block);
+                                                            }
+                                                        });
+                                                    });
+                                                }
+                                            }
+                                            
+                                            // 如果响应完成
+                                            if (data.done) {
+                                                console.log("接收到完成标志");
+                                                isTyping.value = false;
+                                                connectionStatus.value = '完成';
+                                                // 5秒后清除状态消息
+                                                setTimeout(() => {
+                                                    connectionStatus.value = '';
+                                                }, 5000);
+                                                
+                                                // 保存会话ID
+                                                if (data.session_id) {
+                                                    sessionID.value = data.session_id;
+                                                    console.log("会话ID更新为:", sessionID.value);
+                                                }
+                                            }
+                                        } catch (error) {
+                                            console.error("解析事件错误:", error, "原始数据:", event);
+                                        }
+                                    }
+                                }
+                                
+                                // 继续读取
+                                readStream();
+                            }).catch(error => {
+                                console.error("读取流错误:", error);
+                                isTyping.value = false;
+                                connectionStatus.value = `读取流错误: ${error.message}`;
+                                // 10秒后清除错误消息
+                                setTimeout(() => {
+                                    connectionStatus.value = '';
+                                }, 10000);
+                            });
+                        }
+                        
+                        // 开始读取
+                        readStream();
+                    })
+                    .catch(error => {
+                        console.error("请求错误:", error);
+                        messages.value[botMessageIndex].text = `抱歉，连接服务器时出现错误: ${error.message}`;
+                        isTyping.value = false;
+                        connectionStatus.value = `请求错误: ${error.message}`;
+                        // 10秒后清除错误消息
+                        setTimeout(() => {
+                            connectionStatus.value = '';
+                        }, 10000);
+                        scrollToBottom();
+                    });
+                };
+
+                const sendMessage = () => {
+                    if (!userInput.value.trim() || isTyping.value) return;
+                    
+                    // 添加用户消息
+                    messages.value.push({ sender: 'user', text: userInput.value });
+                    
+                    // 清空输入框
+                    const sentMessage = userInput.value;
+                    userInput.value = '';
+                    
+                    // 滚动到底部
+                    scrollToBottom();
+                    
+                    // 请求AI响应 - 移除多余的参数
+                    callAI(sentMessage);
+                };
+
+                const scrollToBottom = () => {
+                    nextTick(() => {
+                        if (messagesContainer.value) {
+                            messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight;
+                        }
+                    });
+                };
+
+                onMounted(() => {
+                    scrollToBottom();
+                    configureMarked(); // 初始化Markdown解析器
+                });
+
+                return {
+                    userInput,
+                    messages,
+                    isTyping,
+                    sendMessage,
+                    messagesContainer,
+                    connectionStatus,
+                    renderMarkdown
+                };
+            }
+        });
+
+        app.use(ElementPlus);
+        app.mount('#app');
+    </script>
+    <footer style="text-align: center; padding: 20px; background: #f5f5f5;" >
+     <a href="https://beian.miit.gov.cn" target="_blank" style="color: #666; text-decoration: none;">粤ICP备2026007468号-1</a>
+    </footer>
+</body>
+</html>

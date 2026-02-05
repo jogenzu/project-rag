@@ -1,0 +1,15 @@
+services:
+  app:
+    #build:
+    #  context: ./app
+    #  dockerfile: Dockerfile
+    #mem_limit: 200m
+    image: project-rag-app:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./app:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
