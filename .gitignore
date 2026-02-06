@@ -28,8 +28,8 @@ logs/
 *.bin
 *.h5
 *.pt
-docs/*.txt
-docs/*.pdf
+app/docs/*.txt
+app/docs/*.pdf
 local_m3e_model/
 
 #some config
