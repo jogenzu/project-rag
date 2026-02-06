@@ -16,6 +16,9 @@ venv/
 *.swo
 
 #log
+app/logs/*.log*
+app/logs/*.log.*
+logs/
 *.log
 *.sql
 *.sqlite
