@@ -8,8 +8,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - /etc/localtime:/etc/localtime:ro
       - ./app:/app
     environment:
       - PYTHONUNBUFFERED=1
-    restart: unless-stopped
+      - TZ=Asia/Shanghai
+    #restart: unless-stopped

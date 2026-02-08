@@ -71,7 +71,7 @@
     const { createApp } = Vue;
 
      // 全局设置 axios 的 baseURL
-     axios.defaults.baseURL = 'https://rag.aieg.top';
+     axios.defaults.baseURL = `${window.location.protocol}//${window.location.host}`;
 
     createApp({
       data() {

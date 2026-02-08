@@ -1,8 +1,4 @@
 {
-  "aa50ab84-f26e-4fc1-9bd7-d0617a3b07a4": {
-    "name": "sample.txt",
-    "path": "docs/sample.txt"
-  },
   "b4724378-d216-42ce-88e8-2096bd739689": {
     "name": "界面新闻_员工手册.pdf",
     "path": "docs/界面新闻_员工手册.pdf"
@@ -11,8 +7,8 @@
     "name": "界面新闻_公司介绍.txt",
     "path": "docs/界面新闻_公司介绍.txt"
   },
-  "6af1a5c1-4f23-41f0-bb2e-2ee1cedb4faf": {
-    "name": "deepseek-v3-1-4.pdf",
-    "path": "docs/deepseek-v3-1-4.pdf"
+  "1aa57b31-f09a-492c-b786-41e10cfa052d": {
+    "name": "sample.txt",
+    "path": "docs/sample.txt"
   }
 }

@@ -367,8 +367,8 @@
   <script>
     const { createApp } = Vue;
     
-    // 设置API基础URL - 确保与服务器地址匹配
-    const API_BASE_URL = 'https://rag.aieg.top';
+    // 设置API基础URL - 自动使用当前访问的域名
+    const API_BASE_URL = `${window.location.protocol}//${window.location.host}`;
     
     // 全局设置 axios 的 baseURL
     axios.defaults.baseURL = API_BASE_URL;
