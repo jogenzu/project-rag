@@ -1,6 +1,6 @@
 # app.py
-from fastapi import FastAPI,Request, HTTPException, UploadFile, File, Query
-from fastapi.responses import StreamingResponse, RedirectResponse
+from fastapi import FastAPI,Request, HTTPException, UploadFile, File, Query, Depends, Cookie
+from fastapi.responses import StreamingResponse, RedirectResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -11,15 +11,17 @@ from openai import OpenAI
 import os
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
 import sqlite3
-from typing import Dict
+from typing import Dict, Optional
 from contextlib import asynccontextmanager
 import urllib.parse
 import file_utils
 from dotenv import load_dotenv
 import logging.config
+import bcrypt
+from jose import JWTError, jwt
 
 logging.config.fileConfig('/app/logging.ini')
 
@@ -40,6 +42,7 @@ async def lifespan(app: FastAPI):
     # 启动前执行
     init()
     init_db()  # 初始化数据库
+    init_admin_user()  # 初始化默认管理员账号
     load_documents()
     yield
     # 关闭时执行
@@ -69,32 +72,171 @@ app.add_middleware(
 def init_db():
     conn = sqlite3.connect('chat_history.db')
     cursor = conn.cursor()
-    
+
+    # 创建用户表
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'user',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    ''')
+
     # 创建聊天会话表
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS chat_sessions (
         id TEXT PRIMARY KEY,
         summary TEXT,
+        user_id INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id)
     )
     ''')
-    
+
     # 创建消息表
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT,
+        user_id INTEGER,
         role TEXT,
         content TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (session_id) REFERENCES chat_sessions (id)
+        FOREIGN KEY (session_id) REFERENCES chat_sessions (id),
+        FOREIGN KEY (user_id) REFERENCES users(id)
     )
     ''')
-    
+
+    # 数据库迁移：为旧数据库添加user_id列
+    try:
+        # 检查messages表是否有user_id列
+        cursor.execute("PRAGMA table_info(messages)")
+        columns = [column[1] for column in cursor.fetchall()]
+
+        if 'user_id' not in columns:
+            # 添加user_id列
+            cursor.execute("ALTER TABLE messages ADD COLUMN user_id INTEGER")
+            print("数据库迁移：已为messages表添加user_id列")
+
+        # 检查chat_sessions表是否有user_id列
+        cursor.execute("PRAGMA table_info(chat_sessions)")
+        columns = [column[1] for column in cursor.fetchall()]
+
+        if 'user_id' not in columns:
+            # 添加user_id列
+            cursor.execute("ALTER TABLE chat_sessions ADD COLUMN user_id INTEGER")
+            print("数据库迁移：已为chat_sessions表添加user_id列")
+    except Exception as e:
+        print(f"数据库迁移警告: {str(e)}")
+
     conn.commit()
     conn.close()
     print("数据库初始化完成!\n")
+
+# 初始化默认管理员账号
+def init_admin_user():
+    # 默认管理员配置（硬编码在数据库中）
+    admin_username = "admin"
+    admin_password = "admin123"
+    
+    conn = sqlite3.connect('chat_history.db')
+    cursor = conn.cursor()
+    
+    # 检查管理员是否存在
+    cursor.execute("SELECT id FROM users WHERE username = ?", (admin_username,))
+    exists = cursor.fetchone()
+    
+    if not exists:
+        # 加密密码
+        password_hash = bcrypt.hashpw(admin_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        
+        # 创建管理员账号
+        cursor.execute(
+            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+            (admin_username, password_hash, 'admin')
+        )
+        conn.commit()
+        print(f"默认管理员账号已创建 - 用户名: {admin_username}, 密码: {admin_password}")
+    else:
+        print(f"管理员账号已存在 - 用户名: {admin_username}")
+    
+    conn.close()
+
+# JWT 工具函数
+def create_access_token(data: dict):
+    """创建 JWT Token"""
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(hours=int(os.getenv("JWT_EXPIRE_HOURS", 24)))
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, os.getenv("JWT_SECRET_KEY"), algorithm=os.getenv("JWT_ALGORITHM", "HS256"))
+    return encoded_jwt
+
+def decode_access_token(token: str):
+    """解码 JWT Token"""
+    try:
+        secret_key = os.getenv("JWT_SECRET_KEY")
+        algorithm = os.getenv("JWT_ALGORITHM", "HS256")
+        print(f"[DEBUG] Decoding token with secret_key: {secret_key[:10] if secret_key else 'None'}..., algorithm: {algorithm}")
+        payload = jwt.decode(token, secret_key, algorithms=[algorithm])
+        return payload
+    except JWTError as e:
+        print(f"[DEBUG] JWT decode error: {e}")
+        return None
+
+def get_current_user(auth_token: Optional[str] = Cookie(None)):
+    """获取当前登录用户"""
+    print(f"[DEBUG] get_current_user called, auth_token: {auth_token}")
+    if auth_token is None:
+        print("[DEBUG] auth_token is None, returning None")
+        return None
+    token = auth_token
+    
+    payload = decode_access_token(token)
+    print(f"[DEBUG] decoded payload: {payload}")
+    if payload is None:
+        print("[DEBUG] payload is None, returning None")
+        return None
+    
+    user_id = payload.get("sub")
+    print(f"[DEBUG] user_id from payload: {user_id} (type: {type(user_id)})")
+    if user_id is None:
+        print("[DEBUG] user_id is None, returning None")
+        return None
+    
+    # 将user_id转换为整数
+    try:
+        user_id = int(user_id)
+    except (ValueError, TypeError):
+        print(f"[DEBUG] Failed to convert user_id to int: {user_id}")
+        return None
+    
+    conn = sqlite3.connect('chat_history.db')
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+    conn.close()
+    
+    print(f"[DEBUG] user from db: {user}")
+    if user:
+        return dict(user)
+    return None
+
+# Pydantic 模型
+class UserRegister(BaseModel):
+    username: str
+    password: str
+
+class UserLogin(BaseModel):
+    username: str
+    password: str
+
+class ChangePassword(BaseModel):
+    username: str
+    new_password: str
 
 # 全局变量
 model = None
@@ -300,9 +442,144 @@ def retrieve_docs(query, k=3):
 
 
 
-# 文档管理 API
+# ========== 认证相关 API ==========
+
+@app.post("/api/auth/register")
+async def register(user: UserRegister):
+    """用户注册"""
+    # 检查用户名是否已存在
+    conn = sqlite3.connect('chat_history.db')
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE username = ?", (user.username,))
+    if cursor.fetchone():
+        conn.close()
+        raise HTTPException(status_code=400, detail="用户名已存在")
+    
+    # 加密密码
+    password_hash = bcrypt.hashpw(user.password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    
+    # 创建用户
+    cursor.execute(
+        "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+        (user.username, password_hash, 'user')
+    )
+    conn.commit()
+    conn.close()
+    
+    return {"message": "注册成功", "username": user.username}
+
+@app.post("/api/auth/login")
+async def login(user: UserLogin):
+    """用户登录"""
+    conn = sqlite3.connect('chat_history.db')
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    # 查询用户
+    cursor.execute("SELECT * FROM users WHERE username = ?", (user.username,))
+    db_user = cursor.fetchone()
+    conn.close()
+    
+    if not db_user:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    
+    # 验证密码
+    if not bcrypt.checkpw(user.password.encode('utf-8'), db_user['password_hash'].encode('utf-8')):
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    
+    # 生成 Token - 将user_id转换为字符串
+    token = create_access_token({"sub": str(db_user['id']), "username": db_user['username'], "role": db_user['role']})
+    
+    # 设置 Cookie
+    response = JSONResponse(content={"message": "登录成功", "token": token, "user": {"id": db_user['id'], "username": db_user['username'], "role": db_user['role']}})
+    response.set_cookie(
+        key="auth_token",
+        value=token,
+        max_age=3600 * int(os.getenv("JWT_EXPIRE_HOURS", 24)),
+        httponly=True,
+        samesite="lax"
+    )
+    return response
+
+@app.post("/api/auth/logout")
+async def logout():
+    """用户登出"""
+    response = JSONResponse(content={"message": "登出成功"})
+    response.delete_cookie("auth_token")
+    return response
+
+@app.get("/api/auth/me")
+async def get_current_user_info(current_user: Optional[Dict] = Depends(get_current_user)):
+    """获取当前用户信息"""
+    print(f"[DEBUG] /api/auth/me called, current_user: {current_user}")
+    if current_user is None:
+        return {"user": None}
+    return {"user": {"id": current_user['id'], "username": current_user['username'], "role": current_user['role']}}
+
+@app.post("/api/auth/change-password")
+async def change_password(password_data: ChangePassword):
+    """修改密码（无需身份验证，通过用户名直接修改）"""
+    conn = sqlite3.connect('chat_history.db')
+    cursor = conn.cursor()
+    
+    # 检查用户是否存在
+    cursor.execute("SELECT id FROM users WHERE username = ?", (password_data.username,))
+    user = cursor.fetchone()
+    
+    if not user:
+        conn.close()
+        raise HTTPException(status_code=404, detail="用户不存在")
+    
+    # 加密新密码
+    password_hash = bcrypt.hashpw(password_data.new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    
+    # 更新密码
+    cursor.execute(
+        "UPDATE users SET password_hash = ? WHERE username = ?",
+        (password_hash, password_data.username)
+    )
+    conn.commit()
+    conn.close()
+    
+    return {"message": "密码修改成功"}
+
+@app.get("/api/auth/verify")
+async def verify_token(current_user: Optional[Dict] = Depends(get_current_user)):
+    """验证 Token 有效性"""
+    if current_user is None:
+        return {"valid": False}
+    return {"valid": True, "user": {"id": current_user['id'], "username": current_user['username'], "role": current_user['role']}}
+
+
+
+
+# ========== 权限装饰器 ==========
+def require_role(allowed_roles: list):
+    """权限装饰器：要求用户具有指定角色之一"""
+    def decorator(func):
+        async def wrapper(*args, **kwargs):
+            # 从请求中获取当前用户
+            request = kwargs.get('request') or args[0] if args else None
+            if request:
+                current_user = get_current_user(request.cookies.get('auth_token'))
+            else:
+                current_user = None
+            
+            # 检查用户权限
+            if current_user is None or current_user['role'] not in allowed_roles:
+                raise HTTPException(status_code=403, detail="权限不足")
+            
+            return await func(*args, **kwargs)
+        return wrapper
+    return decorator
+
+# ========== 文档管理 API ==========
 @app.post("/api/upload")
-async def upload_document(file: UploadFile = File(...)):
+async def upload_document(file: UploadFile = File(...), current_user: Optional[Dict] = Depends(get_current_user)):
+    # 检查管理员权限
+    if current_user is None or current_user['role'] != 'admin':
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+
     if not file.filename.endswith((".txt", ".pdf", ".docx")):
         raise HTTPException(status_code=400, detail="仅支持.txt或.pdf或.docx文件!")
     
@@ -352,11 +629,18 @@ async def upload_document(file: UploadFile = File(...)):
     return {"id": doc_id, "name": file_name}
 
 @app.get("/api/documents")
-async def list_documents():
+async def list_documents(current_user: Optional[Dict] = Depends(get_current_user)):
+    # 检查管理员权限
+    if current_user is None or current_user['role'] != 'admin':
+        raise HTTPException(status_code=403, detail="需要管理员权限")
     return [{"id": k, "name": v["name"]} for k, v in uploaded_documents.items()]
 
 @app.delete("/api/documents/{doc_id}")
-async def delete_document(doc_id: str):
+async def delete_document(doc_id: str, current_user: Optional[Dict] = Depends(get_current_user)):
+    # 检查管理员权限
+    if current_user is None or current_user['role'] != 'admin':
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    
     if doc_id not in uploaded_documents:
         raise HTTPException(status_code=404, detail="文档不存在")
     
@@ -382,29 +666,31 @@ async def delete_document(doc_id: str):
 
 
 @app.post("/api/stream")
-async def stream_post(request: Request):
+async def stream_post(request: Request, current_user: Optional[Dict] = Depends(get_current_user)):
     try:
         # 解析请求体中的 JSON 数据
         req_data = await request.json()
         query = req_data.get("query")
         session_id = req_data.get("session_id")  # 获取会话ID
         web_search = req_data.get("web_search", False)  # 获取联网搜索选项
-        return await process_stream_request(query, session_id, web_search)
+        return await process_stream_request(query, session_id, web_search, current_user)
     except Exception as e:
         error_msg = str(e)
         print(f"聊天接口错误: {error_msg}")
         raise HTTPException(status_code=500, detail=error_msg)
 
 @app.get("/api/stream")
-async def stream_get(query: str = Query(None), session_id: str = Query(None), web_search: bool = Query(False)):
+async def stream_get(query: str = Query(None), session_id: str = Query(None), web_search: bool = Query(False), current_user: Optional[Dict] = Depends(get_current_user)):
     try:
         if not query:
             raise HTTPException(status_code=400, detail="Missing query parameter")
-        return await process_stream_request(query, session_id, web_search)
+        return await process_stream_request(query, session_id, web_search, current_user)
     except Exception as e:
         error_msg = str(e)
         print(f"聊天接口错误: {error_msg}")
         raise HTTPException(status_code=500, detail=error_msg)
+
+
 
  
 # 执行网络搜索
@@ -437,13 +723,19 @@ async def perform_web_search(query: str):
     except Exception as e:
         return f"执行网络搜索时出错: {str(e)}"
 
-async def process_stream_request(query: str, session_id: str = None, web_search: bool = False):
-    print(f"query: {query}, session_id: {session_id}, web_search: {web_search}")
+async def process_stream_request(query: str, session_id: str = None, web_search: bool = False, current_user: Optional[Dict] = None):
+    print(f"query: {query}, session_id: {session_id}, web_search: {web_search}, current_user: {current_user}")
     # 检查session是否存在
     conn = sqlite3.connect('chat_history.db')
     cursor = conn.cursor()
     cursor.execute("SELECT id FROM chat_sessions WHERE id = ?", (session_id,))
     has_session = cursor.fetchone()
+    
+    # 获取用户ID
+    user_id = None
+    if current_user and 'id' in current_user:
+        user_id = current_user['id']
+    
     conn.close()
     
     if not has_session:
@@ -510,7 +802,7 @@ async def process_stream_request(query: str, session_id: str = None, web_search:
             if chunk.choices[0].delta.content:
                 content = chunk.choices[0].delta.content
                 full_response += content
-                print(f"$$$$$$$$ {content}")
+                #print(f"$$$$$$$$ {content}")
                 yield f"data: {json.dumps({'content': content, 'session_id': session_id})}\n\n"
                 await asyncio.sleep(0.01)  # 添加小延迟确保流式输出
             
@@ -518,12 +810,12 @@ async def process_stream_request(query: str, session_id: str = None, web_search:
             if chunk.choices[0].finish_reason is not None:
                 yield f"data: {json.dumps({'content': '', 'session_id': session_id, 'done': True})}\n\n"
                 break
-        print("----------",full_response)    
+        print("----------",full_response)
         # 响应完成后，将完整会话保存到数据库
         if has_session:
-            await add_message_to_session(session_id, query, full_response)
+            await add_message_to_session(session_id, query, full_response, user_id)
         else:
-            await create_new_chat_session(session_id, query, full_response)
+            await create_new_chat_session(session_id, query, full_response, user_id)
             
     return StreamingResponse(
             generate(),
@@ -536,7 +828,7 @@ async def process_stream_request(query: str, session_id: str = None, web_search:
         )
 
 # 创建新的聊天会话
-async def create_new_chat_session(session_id, query, response):
+async def create_new_chat_session(session_id, query, response, user_id=None):
     # 创建会话摘要
     summary = query[:30] + "..." if len(query) > 30 else query
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -547,20 +839,20 @@ async def create_new_chat_session(session_id, query, response):
         
         # 插入会话记录
         cursor.execute(
-            "INSERT INTO chat_sessions (id, summary, created_at, updated_at) VALUES (?, ?, ?, ?)",
-            (session_id, summary, current_time, current_time)
+            "INSERT INTO chat_sessions (id, summary, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (session_id, summary, user_id, current_time, current_time)
         )
         
         # 插入用户消息
         cursor.execute(
-            "INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-            (session_id, "user", query, current_time)
+            "INSERT INTO messages (session_id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+            (session_id, user_id, "user", query, current_time)
         )
         
         # 插入机器人响应
         cursor.execute(
-            "INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-            (session_id, "bot", response, current_time)
+            "INSERT INTO messages (session_id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+            (session_id, user_id, "bot", response, current_time)
         )
         
         conn.commit()
@@ -573,7 +865,7 @@ async def create_new_chat_session(session_id, query, response):
         return False
 
 # 向现有会话添加消息
-async def add_message_to_session(session_id, query, response):
+async def add_message_to_session(session_id, query, response, user_id=None):
     current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     try:
         conn = sqlite3.connect('chat_history.db')
@@ -587,8 +879,8 @@ async def add_message_to_session(session_id, query, response):
         
         # 插入机器人响应
         cursor.execute(
-            "INSERT INTO messages (session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
-            (session_id, "bot", response, current_time)
+            "INSERT INTO messages (session_id, user_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+            (session_id, user_id, "bot", response, current_time)
         )
         
         # 更新会话时间戳，使其保持最新
@@ -608,13 +900,34 @@ async def add_message_to_session(session_id, query, response):
 
 # 会话历史记录 API
 @app.get("/api/chat/history")
-async def get_chat_history():
+async def get_chat_history(current_user: Optional[Dict] = Depends(get_current_user)):
     try:
         conn = sqlite3.connect('chat_history.db')
         conn.row_factory = sqlite3.Row  # 启用行工厂，使结果可以通过列名访问
         cursor = conn.cursor()
         
-        cursor.execute("SELECT id, summary, updated_at  FROM chat_sessions ORDER BY updated_at DESC limit 10")
+        # 根据用户角色返回不同的历史记录
+        if current_user is None:
+            # 游客：只能看到公共聊天记录（user_id 为 NULL 的）
+            cursor.execute("""
+                SELECT DISTINCT cs.id, cs.summary, cs.updated_at 
+                FROM chat_sessions cs
+                JOIN messages m ON cs.id = m.session_id
+                WHERE m.user_id IS NULL
+                ORDER BY cs.updated_at DESC LIMIT 10
+            """)
+        elif current_user['role'] == 'admin':
+            # 管理员：可以看到所有会话
+            cursor.execute("SELECT id, summary, updated_at FROM chat_sessions ORDER BY updated_at DESC LIMIT 10")
+        else:
+            # 普通用户：只能看到自己的会话
+            cursor.execute("""
+                SELECT id, summary, updated_at 
+                FROM chat_sessions 
+                WHERE user_id = ?
+                ORDER BY updated_at DESC LIMIT 10
+            """, (current_user['id'],))
+        
         rows = cursor.fetchall()
         
         # 将行转换为字典
@@ -628,19 +941,31 @@ async def get_chat_history():
         raise HTTPException(status_code=500, detail=f"获取聊天历史失败: {str(e)}")
 
 @app.get("/api/chat/session/{session_id}")
-async def get_session(session_id: str):
+async def get_session(session_id: str, current_user: Optional[Dict] = Depends(get_current_user)):
     try:
         conn = sqlite3.connect('chat_history.db')
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
         
         # 查询会话是否存在
-        cursor.execute("SELECT id FROM chat_sessions WHERE id = ?", (session_id,))
+        cursor.execute("SELECT id, user_id FROM chat_sessions WHERE id = ?", (session_id,))
         session = cursor.fetchone()
         
         if not session:
             conn.close()
             raise HTTPException(status_code=404, detail="会话不存在")
+        
+        # 权限检查
+        if current_user is None:
+            # 游客：只能查看公共会话（user_id 为 NULL）
+            if session['user_id'] is not None:
+                conn.close()
+                raise HTTPException(status_code=403, detail="权限不足")
+        elif current_user['role'] != 'admin':
+            # 普通用户：只能查看自己的会话
+            if session['user_id'] != current_user['id']:
+                conn.close()
+                raise HTTPException(status_code=403, detail="权限不足")
         
         # 获取会话中的所有消息
         cursor.execute(
@@ -660,10 +985,29 @@ async def get_session(session_id: str):
 
 # 删除会话
 @app.delete("/api/chat/session/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str, current_user: Optional[Dict] = Depends(get_current_user)):
     try:
         conn = sqlite3.connect('chat_history.db')
         cursor = conn.cursor()
+        
+        # 查询会话信息
+        cursor.execute("SELECT id, user_id FROM chat_sessions WHERE id = ?", (session_id,))
+        session = cursor.fetchone()
+        
+        if not session:
+            conn.close()
+            raise HTTPException(status_code=404, detail="会话不存在")
+        
+        # 权限检查
+        if current_user is None:
+            # 游客：不能删除会话
+            conn.close()
+            raise HTTPException(status_code=403, detail="权限不足")
+        elif current_user['role'] != 'admin':
+            # 普通用户：只能删除自己的会话
+            if session['user_id'] != current_user['id']:
+                conn.close()
+                raise HTTPException(status_code=403, detail="权限不足")
         
         # 首先删除会话关联的所有消息
         cursor.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
@@ -688,13 +1032,32 @@ async def delete_session(session_id: str):
 
 # 修改会话的summary
 @app.post("/api/chat/session/{session_id}/summary")
-async def update_session_summary(session_id: str, request: Request):
- try:
+async def update_session_summary(session_id: str, request: Request, current_user: Optional[Dict] = Depends(get_current_user)):
+    try:
         #从post获取summary
         req_data = await request.json()
         summary = req_data.get("summary")
         conn = sqlite3.connect('chat_history.db')
         cursor = conn.cursor()
+        
+        # 查询会话信息
+        cursor.execute("SELECT id, user_id FROM chat_sessions WHERE id = ?", (session_id,))
+        session = cursor.fetchone()
+        
+        if not session:
+            conn.close()
+            raise HTTPException(status_code=404, detail="会话不存在")
+        
+        # 权限检查
+        if current_user is None:
+            # 游客：不能修改会话
+            conn.close()
+            raise HTTPException(status_code=403, detail="权限不足")
+        elif current_user['role'] != 'admin':
+            # 普通用户：只能修改自己的会话
+            if session['user_id'] != current_user['id']:
+                conn.close()
+                raise HTTPException(status_code=403, detail="权限不足")
  
         # 更新会话
         cursor.execute("UPDATE chat_sessions SET summary = ? WHERE id = ?", (summary, session_id))
@@ -703,33 +1066,39 @@ async def update_session_summary(session_id: str, request: Request):
         
         return {"message": "会话已修改"}
    
- except Exception as e:
+    except HTTPException:
+        raise
+    except Exception as e:
         print(f"修改会话失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"修改会话失败: {str(e)}")
 
-    
-
-
-
-         
-
-    
-
 # 导出会话为markdown格式下载
 @app.get("/api/chat/export/{session_id}")
-async def export_session(session_id: str):
+async def export_session(session_id: str, current_user: Optional[Dict] = Depends(get_current_user)):
     try:
         conn = sqlite3.connect('chat_history.db')
         conn.row_factory = sqlite3.Row  # Set row factory to enable dictionary access
         cursor = conn.cursor()
         
         # 查询会话是否存在
-        cursor.execute("SELECT id, summary FROM chat_sessions WHERE id = ?", (session_id,))
+        cursor.execute("SELECT id, summary, user_id FROM chat_sessions WHERE id = ?", (session_id,))
         session = cursor.fetchone()
         
         if not session:
             conn.close()
             raise HTTPException(status_code=404, detail="会话不存在")
+        
+        # 权限检查
+        if current_user is None:
+            # 游客：只能导出公共会话（user_id 为 NULL）
+            if session['user_id'] is not None:
+                conn.close()
+                raise HTTPException(status_code=403, detail="权限不足")
+        elif current_user['role'] != 'admin':
+            # 普通用户：只能导出自己的会话
+            if session['user_id'] != current_user['id']:
+                conn.close()
+                raise HTTPException(status_code=403, detail="权限不足")
         
         # 获取会话中的所有消息
         cursor.execute("SELECT role, content FROM messages WHERE session_id = ? ORDER BY id asc", (session_id,))
@@ -748,15 +1117,44 @@ async def export_session(session_id: str):
         conn.close()
         
         return StreamingResponse(
-            iter([markdown_content]), 
-            media_type="text/markdown", 
+            iter([markdown_content]),
+            media_type="text/markdown",
             headers={"Content-Disposition": f"attachment; filename=session_{session_id}.md"}
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"导出会话失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"导出会话失败: {str(e)}")
 
+# 删除单条消息（仅管理员）
+@app.delete("/api/chat/message/{message_id}")
+async def delete_message(message_id: int, current_user: Optional[Dict] = Depends(get_current_user)):
+    # 检查管理员权限
+    if current_user is None or current_user['role'] != 'admin':
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+    
+    try:
+        conn = sqlite3.connect('chat_history.db')
+        cursor = conn.cursor()
+        
+        # 删除消息
+        cursor.execute("DELETE FROM messages WHERE id = ?", (message_id,))
+        
+        if cursor.rowcount == 0:
+            conn.close()
+            raise HTTPException(status_code=404, detail="消息不存在")
+        
+        conn.commit()
+        conn.close()
+        
+        return {"message": "消息已删除"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"删除消息失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"删除消息失败: {str(e)}")
 
 
 # 健康检查接口

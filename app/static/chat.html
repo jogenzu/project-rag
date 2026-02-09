@@ -4,6 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RAG Demo - 对话</title>
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
   <!-- Bootstrap CSS -->
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
   <!-- Vue.js -->
@@ -299,6 +302,32 @@
           </button>
       </div>
       <div class="sidebar-content">
+        <!-- 用户信息显示 -->
+        <div v-if="!isSidebarCollapsed" class="mb-3 p-2 bg-dark rounded">
+          <div v-if="currentUser">
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <div class="d-flex align-items-center">
+                <i class="bi bi-person-circle fs-4 me-2"></i>
+                <div>
+                  <div class="fw-bold">{{ currentUser.username }}</div>
+                  <div class="badge" :class="isAdmin ? 'bg-danger' : 'bg-primary'">
+                    {{ isAdmin ? '管理员' : '用户' }}
+                  </div>
+                </div>
+              </div>
+              <!-- 退出按钮 -->
+              <button class="btn btn-sm btn-outline-light" @click="logout" title="退出登录">
+                <i class="bi bi-box-arrow-right"></i>
+              </button>
+            </div>
+          </div>
+          <div v-else class="text-muted">
+            <i class="bi bi-person-circle fs-4 me-2"></i>
+            <span>游客模式</span>
+          </div>
+        </div>
+
+        <!-- 历史对话列表 -->
         <div v-for="session in chatHistory" :key="session.id" class="history-item" @click="loadSession(session.id)">
           <div class="history-summary">{{ session.summary }}</div>
           <div class="history-time">{{ formatTime(session.updated_at) }}</div>
@@ -317,14 +346,24 @@
             <a class="dropdown-item" href="#" @click.stop="renameSession(session.id)">
               <i class="bi bi-pencil"></i> 重命名
             </a>
+            <!-- 管理员可以删除单条消息 -->
+            <a v-if="isAdmin" class="dropdown-item text-danger" href="#" @click.stop="deleteAllMessages(session.id)">
+              <i class="bi bi-trash3"></i> 清空消息
+            </a>
           </div>
         </div>
         <div v-if="chatHistory.length === 0" class="text-center text-muted mt-3">
           暂无历史对话记录
         </div>
-        <a href="documents.html" class="btn btn-outline-light mt-3 w-100">文档管理</a>
+
+        <!-- 文档管理按钮 - 仅管理员可见 -->
+        <a v-if="isAdmin" href="documents.html" class="btn btn-outline-light mt-3 w-100">
+          <i class="bi bi-file-earmark-text me-2"></i>文档管理
+        </a>
+
+        <!-- 设置 -->
         <div class="form-check form-switch mt-3 text-white">
-          <input class="form-check-input" type="checkbox" id="autoSpeechSwitch" v-model="autoSpeech">  <!--autoSpeech是在data()里定义的 -->
+          <input class="form-check-input" type="checkbox" id="autoSpeechSwitch" v-model="autoSpeech">
           <label class="form-check-label" for="autoSpeechSwitch">自动语音播放</label>
         </div>
         <!--<div class="form-check form-switch mt-2 text-white">
@@ -345,6 +384,10 @@
           <div v-else class="markdown-content" v-html="renderMarkdown(msg.content)"></div>
           <button v-if="msg.role === 'bot' && msg.content" class="btn btn-sm btn-outline-secondary play-btn" @click="toggleSpeech(msg.content, index)">
             {{ speakingIndex === index ? '停止' : '播放' }}
+          </button>
+          <!-- 管理员可以删除单条消息 -->
+          <button v-if="isAdmin && msg.id" class="btn btn-sm btn-outline-danger ms-2" @click="deleteMessage(msg.id)">
+            <i class="bi bi-trash"></i>
           </button>
         </div>
       </div>
@@ -400,9 +443,12 @@
           currentUtterance: null, // 当前语音合成对象
           currentSessionId: null, // 当前会话ID
           webSearch: false, // 联网搜索开关，默认关闭
+          currentUser: null, // 当前登录用户
+          isAdmin: false, // 是否管理员
         };
       },
       mounted() {
+        this.fetchCurrentUser();
         this.fetchChatHistory();
         this.initSpeechRecognition();
         this.testServerConnection();
@@ -412,6 +458,32 @@
         document.removeEventListener('click', this.handleClickOutside);
       },
       methods: {
+        async fetchCurrentUser() {
+          try {
+            const response = await axios.get('/api/auth/me');
+            if (response.data && response.data.user) {
+              this.currentUser = response.data.user;
+              this.isAdmin = response.data.user.role === 'admin';
+            }
+          } catch (error) {
+            console.error('获取用户信息失败:', error);
+            // 用户未登录，保持游客状态
+          }
+        },
+
+        async logout() {
+          try {
+            await axios.post('/api/auth/logout');
+            this.currentUser = null;
+            this.isAdmin = false;
+            // 跳转到登录页
+            window.location.href = 'login.html';
+          } catch (error) {
+            console.error('登出失败:', error);
+            alert('登出失败，请重试');
+          }
+        },
+
         renderMarkdown(text) {
           if (!text) return '';
           try {
@@ -725,7 +797,7 @@
             alert('导出会话失败！');
           }
         },
-    
+
         deleteSession(sessionId) {
           if (confirm('确认是否要删除?')) {
             this.chatHistory = this.chatHistory.filter(session => session.id !== sessionId);
@@ -737,6 +809,45 @@
             }
           }
         },
+
+        async deleteAllMessages(sessionId) {
+          if (confirm('确认清空该会话的所有消息？此操作不可恢复！')) {
+            try {
+              // 获取会话的所有消息
+              const response = await axios.get(`/api/chat/session/${sessionId}`);
+              if (response.data.messages && response.data.messages.length > 0) {
+                // 删除每条消息
+                for (const msg of response.data.messages) {
+                  try {
+                    await axios.delete(`/api/chat/message/${msg.id}`);
+                  } catch (error) {
+                    console.error('删除消息失败:', error);
+                  }
+                }
+                alert('消息已清空');
+                // 重新加载会话
+                await this.loadSession(sessionId);
+              }
+            } catch (error) {
+              console.error('获取会话消息失败:', error);
+              alert('操作失败！');
+            }
+          }
+        },
+
+        async deleteMessage(messageId) {
+          if (confirm('确认删除这条消息？')) {
+            try {
+              await axios.delete(`/api/chat/message/${messageId}`);
+              // 从消息列表中移除
+              this.messages = this.messages.filter(msg => msg.id !== messageId);
+            } catch (error) {
+              console.error('删除消息失败:', error);
+              alert('删除失败！');
+            }
+          }
+        },
+
         renameSession(sessionId) {
           // 获取当前会话的summary ,放到prompt中
           const currentSummary = this.chatHistory.find(session => session.id === sessionId).summary;
