@@ -13,3 +13,6 @@ beautifulsoup4==4.13.4
 markdown==3.8
 uvicorn==0.34.2
 python-dotenv==1.1.0
+bcrypt==4.2.0
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
