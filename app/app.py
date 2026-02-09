@@ -54,7 +54,7 @@ app = FastAPI(lifespan=lifespan, debug=True)
 
 @app.get("/")
 async def root():
-    return RedirectResponse(url="/static/chat.html")
+    return RedirectResponse(url="/static/login.html")
 
 # 挂载静态文件目录
 app.mount("/static", StaticFiles(directory="static", html=True), name="static")
