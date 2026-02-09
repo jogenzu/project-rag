@@ -30,7 +30,10 @@ logs/
 *.pt
 app/docs/*.txt
 app/docs/*.pdf
+app/docs/*.json
 local_m3e_model/
+app/chunks_mapping.npy
+app/chat_history.db
 
 #some config
 *.key
