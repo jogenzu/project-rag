@@ -1005,7 +1005,7 @@ async def delete_session(session_id: str, current_user: Optional[Dict] = Depends
             raise HTTPException(status_code=403, detail="权限不足")
         elif current_user['role'] != 'admin':
             # 普通用户：只能删除自己的会话
-            if session['user_id'] != current_user['id']:
+            if session[1] != current_user['id']:
                 conn.close()
                 raise HTTPException(status_code=403, detail="权限不足")
         
@@ -1055,7 +1055,7 @@ async def update_session_summary(session_id: str, request: Request, current_user
             raise HTTPException(status_code=403, detail="权限不足")
         elif current_user['role'] != 'admin':
             # 普通用户：只能修改自己的会话
-            if session['user_id'] != current_user['id']:
+            if session[1] != current_user['id']:
                 conn.close()
                 raise HTTPException(status_code=403, detail="权限不足")
  

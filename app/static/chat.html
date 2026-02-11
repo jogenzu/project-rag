@@ -798,11 +798,16 @@
           }
         },
 
-        deleteSession(sessionId) {
+        async deleteSession(sessionId) {
           if (confirm('确认是否要删除?')) {
-            this.chatHistory = this.chatHistory.filter(session => session.id !== sessionId);
             try {
-               axios.delete(`/api/chat/session/${sessionId}`);
+               await axios.delete(`/api/chat/session/${sessionId}`);
+               this.chatHistory = this.chatHistory.filter(session => session.id !== sessionId);
+               // 如果删除的是当前会话，清空当前会话
+               if (this.currentSessionId === sessionId) {
+                 this.messages = [];
+                 this.currentSessionId = null;
+               }
             } catch (error) {
               console.error('删除服务器失败:', error);
               alert('删除服务器失败！');
