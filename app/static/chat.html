@@ -321,9 +321,15 @@
               </button>
             </div>
           </div>
-          <div v-else class="text-muted">
-            <i class="bi bi-person-circle fs-4 me-2"></i>
-            <span>游客模式</span>
+          <div v-else class="d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center text-muted">
+              <i class="bi bi-person-circle fs-4 me-2"></i>
+              <span>游客模式</span>
+            </div>
+            <!-- 返回登录按钮 -->
+            <button class="btn btn-sm btn-outline-light" @click="goToLogin" title="返回登录">
+              <i class="bi bi-box-arrow-in-right"></i>
+            </button>
           </div>
         </div>
 
@@ -482,6 +488,11 @@
             console.error('登出失败:', error);
             alert('登出失败，请重试');
           }
+        },
+
+        goToLogin() {
+          // 游客返回登录页
+          window.location.href = 'login.html';
         },
 
         renderMarkdown(text) {
@@ -830,8 +841,12 @@
                   }
                 }
                 alert('消息已清空');
-                // 重新加载会话
-                await this.loadSession(sessionId);
+                // 如果清空的是当前正在查看的会话，立即清空右侧消息显示
+                if (this.currentSessionId === sessionId) {
+                  this.messages = [];
+                }
+              } else {
+                alert('该会话没有消息');
               }
             } catch (error) {
               console.error('获取会话消息失败:', error);
