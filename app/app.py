@@ -969,7 +969,7 @@ async def get_session(session_id: str, current_user: Optional[Dict] = Depends(ge
         
         # 获取会话中的所有消息
         cursor.execute(
-            "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id asc",
+            "SELECT id, role, content FROM messages WHERE session_id = ? ORDER BY id asc",
             (session_id,)
         )
         messages = [dict(row) for row in cursor.fetchall()]
