@@ -697,28 +697,40 @@ async def stream_get(query: str = Query(None), session_id: str = Query(None), we
 async def perform_web_search(query: str):
     try:
         import requests
+        import json
         
-        
-        # 使用Google搜索
-        query = urllib.parse.quote(query)
-        #search_url = f"https://www.google.com/search?q={encoded_query}"
-        api_key = os.getenv("GOOGLE_SEARCH_API_KEY")
-        search_engine_id = os.getenv("GOOGLE_SEARCH_ENGINE_ID")
-        search_url = f"https://www.googleapis.com/customsearch/v1?key={api_key}&cx={search_engine_id}&q={query}&start=0"
+        # 使用bochaai搜索API
+        bochaai_api_key = os.getenv("BOCHAAI_API_KEY")
+        search_url = "https://api.bochaai.com/v1/search"
         
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+            'Authorization': f'Bearer {bochaai_api_key}',
+            'Content-Type': 'application/json'
         }
         
-        response = requests.get(search_url, headers=headers, timeout=10)
+        payload = {
+            'query': query,
+            'count': 5,  # 返回5条搜索结果
+            'language': 'zh-CN'  # 使用中文搜索
+        }
+        
+        response = requests.post(search_url, headers=headers, json=payload, timeout=10)
         data = response.json()  # Parse JSON response
       
-        print(f"Google search response: {data}")
+        print(f"Bochaai search response: {data}")
         
         if response.status_code != 200:
             return f"搜索失败，状态码: {response.status_code}"
  
-        return str(data)
+        # 格式化搜索结果
+        results = []
+        for item in data.get('items', []):
+            title = item.get('title', '')
+            snippet = item.get('snippet', '')
+            url = item.get('url', '')
+            results.append(f"标题: {title}\n摘要: {snippet}\n链接: {url}\n")
+        
+        return "联网搜索结果:\n" + "\n".join(results)
             
     except Exception as e:
         return f"执行网络搜索时出错: {str(e)}"
@@ -744,28 +756,29 @@ async def process_stream_request(query: str, session_id: str = None, web_search:
     # 构建上下文
     context_parts = []
     
-    # 如果启用了网络搜索，添加网络搜索结果
+    # 如果启用了网络搜索，只使用网络搜索结果
     if web_search:
         web_results = await perform_web_search(query)
         print(f"web_results: {web_results}")
         context_parts.append(web_results)
-    
-    # 检索相关文档
-    retrieved_docs, retrieved_chunks = retrieve_docs(query)
-    
-    # 添加文档检索结果
-    context_parts.append("相关文档:\n" + "\n".join(retrieved_docs))
-    
-    if retrieved_chunks:
-        chunk_context = "\n\n文档内容片段:\n"
-        for i, (doc_id, chunk) in enumerate(retrieved_chunks):
-            doc_name = "未知文档"
-            if doc_id in uploaded_documents:
-                doc_name = uploaded_documents[doc_id]["name"]
-            chunk_context += f"[文档{i+1}: {doc_name}] {chunk}\n"
-        context_parts.append(chunk_context)
     else:
-        context_parts.append("\n\n没有找到相关的文档内容。")
+        # 否则使用本地知识库搜索结果
+        # 检索相关文档
+        retrieved_docs, retrieved_chunks = retrieve_docs(query)
+        
+        # 添加文档检索结果
+        context_parts.append("相关文档:\n" + "\n".join(retrieved_docs))
+        
+        if retrieved_chunks:
+            chunk_context = "\n\n文档内容片段:\n"
+            for i, (doc_id, chunk) in enumerate(retrieved_chunks):
+                doc_name = "未知文档"
+                if doc_id in uploaded_documents:
+                    doc_name = uploaded_documents[doc_id]["name"]
+                chunk_context += f"[文档{i+1}: {doc_name}] {chunk}\n"
+            context_parts.append(chunk_context)
+        else:
+            context_parts.append("\n\n没有找到相关的文档内容。")
     
     # 合并上下文
     context = "\n".join(context_parts)
