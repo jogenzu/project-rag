@@ -372,10 +372,14 @@
           <input class="form-check-input" type="checkbox" id="autoSpeechSwitch" v-model="autoSpeech">
           <label class="form-check-label" for="autoSpeechSwitch">自动语音播放</label>
         </div>
-        <!--<div class="form-check form-switch mt-2 text-white">
-          <input class="form-check-input" type="checkbox" id="webSearchSwitch" v-model="webSearch">
-          <label class="form-check-label" for="webSearchSwitch">联网搜索</label>
-        </div>-->
+        <!-- 搜索方式选择 -->
+        <div class="mt-3 text-white">
+          <label class="form-label">搜索方式</label>
+          <select class="form-select form-select-sm" v-model="searchMode">
+            <option value="local">本地知识库搜索</option>
+            <option value="web">联网搜索</option>
+          </select>
+        </div>
       </div>
     </div>
     <!-- 对话区域 -->
@@ -448,7 +452,7 @@
           autoSpeech: true, // 默认启用自动语音播放
           currentUtterance: null, // 当前语音合成对象
           currentSessionId: null, // 当前会话ID
-          webSearch: false, // 联网搜索开关，默认关闭
+          searchMode: 'local', // 默认使用本地知识库搜索
           currentUser: null, // 当前登录用户
           isAdmin: false, // 是否管理员
         };
@@ -621,7 +625,7 @@
             }
             
             // 添加联网搜索参数
-            if (this.webSearch) {
+            if (this.searchMode === 'web') {
               apiUrl += `&web_search=true`;
             }
             
